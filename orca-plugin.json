@@ -1,0 +1,27 @@
+{
+  "manifestVersion": 1,
+  "id": "read-aloud",
+  "publisher": "dropoutsanta",
+  "name": "Read Aloud",
+  "version": "0.1.0",
+  "description": "When an agent finishes, Claude writes a short spoken summary and the Mac voice reads it. Stays quiet while the microphone is in use.",
+  "engines": { "orca": ">=1.4.0" },
+  "pluginApi": 1,
+  "main": "main.mjs",
+  "contributes": {
+    "panels": [
+      { "id": "read-aloud", "title": "Read Aloud", "icon": "volume-2", "entry": "panel.html" }
+    ],
+    "commands": [
+      { "id": "stop", "title": "Read Aloud: stop" }
+    ],
+    "events": [{ "on": "agent.status.changed" }],
+    "keybindings": [
+      { "command": "stop", "key": "mod+alt+x", "when": "global" }
+    ]
+  },
+  "capabilities": [
+    { "kind": "notifications:show" },
+    { "kind": "events:subscribe" }
+  ]
+}
