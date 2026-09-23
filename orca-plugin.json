@@ -24,7 +24,6 @@
   },
   "capabilities": [
     { "kind": "notifications:show" },
-    { "kind": "events:subscribe" },
-    { "kind": "panel:channel" }
+    { "kind": "events:subscribe" }
   ]
 }
