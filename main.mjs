@@ -42,6 +42,7 @@ const STATE_FILE = path.join(HOME, 'Library/Application Support/read-aloud/state
 const LOG_FILE = path.join(HOME, 'Library/Logs/read-aloud.log')
 const BOARD_PORT = 47321
 
+let host = null
 let ticket = 0
 let busy = false
 let queued = false
@@ -61,6 +62,7 @@ const sessions = new Map()
 const activity = []
 
 export default function activate(orca) {
+  host = orca.host
   loadState()
   for (const reply of currentReplies()) {
     heard.add(reply.id)
@@ -68,7 +70,24 @@ export default function activate(orca) {
   startBoard()
   startHotkey()
   orca.commands.register('stop', () => {
-    halt(orca, 'stopped from the shortcut')
+    halt(orca, 'stopped')
+    return { ok: true }
+  })
+  orca.commands.register('set-enabled', (args) => {
+    const on =
+      args && typeof args === 'object' && 'on' in args ? Boolean(args.on) : !enabled
+    enabled = on
+    saveState()
+    record(enabled ? 'turned on' : 'turned off')
+    return { ok: true }
+  })
+  orca.commands.register('mute', (args) => {
+    const key = args && typeof args === 'object' && typeof args.key === 'string' ? args.key : ''
+    if (!key) return { ok: false }
+    if (muted.has(key)) muted.delete(key)
+    else muted.add(key)
+    saveState()
+    record(muted.has(key) ? `muted ${key}` : `unmuted ${key}`)
     return { ok: true }
   })
   orca.events.on('agent.status.changed', (payload) => {
@@ -592,9 +611,15 @@ function saveState() {
   fs.writeFileSync(STATE_FILE, JSON.stringify({ enabled, muted: [...muted] }))
 }
 
+function publishBoard() {
+  if (!host) return
+  host.call('panel.publish', { body: snapshot() }).catch(() => {})
+}
+
 function record(text) {
   activity.unshift({ t: Date.now(), text })
   if (activity.length > 40) activity.pop()
+  publishBoard()
   try {
     fs.mkdirSync(path.dirname(LOG_FILE), { recursive: true })
     fs.appendFileSync(LOG_FILE, `${new Date().toISOString()} ${text}\n`)

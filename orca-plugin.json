@@ -13,7 +13,9 @@
       { "id": "read-aloud", "title": "Read Aloud", "icon": "volume-2", "entry": "panel.html" }
     ],
     "commands": [
-      { "id": "stop", "title": "Read Aloud: stop" }
+      { "id": "stop", "title": "Read Aloud: stop" },
+      { "id": "set-enabled", "title": "Read Aloud: set enabled" },
+      { "id": "mute", "title": "Read Aloud: mute chat" }
     ],
     "events": [{ "on": "agent.status.changed" }],
     "keybindings": [
@@ -22,6 +24,7 @@
   },
   "capabilities": [
     { "kind": "notifications:show" },
-    { "kind": "events:subscribe" }
+    { "kind": "events:subscribe" },
+    { "kind": "panel:channel" }
   ]
 }

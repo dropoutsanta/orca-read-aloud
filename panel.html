@@ -5,22 +5,105 @@
     <style>
       body {
         margin: 0;
-        padding: 14px;
+        padding: 12px;
         font-family: system-ui, sans-serif;
-        font-size: 13px;
-        line-height: 1.45;
+        font-size: 12px;
+        line-height: 1.4;
         color: var(--foreground, #ddd);
         background: var(--background, transparent);
       }
-      h1 { font-size: 14px; margin: 0 0 8px; }
-      p { margin: 0 0 10px; color: var(--muted-foreground, #999); }
-      code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+      h1 { font-size: 14px; margin: 0; }
+      header { display: flex; justify-content: space-between; gap: 8px; align-items: center; }
+      button {
+        font: inherit;
+        color: inherit;
+        background: var(--card, transparent);
+        border: 1px solid var(--border, #555);
+        border-radius: 6px;
+        padding: 3px 7px;
+      }
+      p { margin: 8px 0; color: var(--muted-foreground, #999); }
+      table { width: 100%; border-collapse: collapse; }
+      th, td { text-align: left; padding: 5px 4px; border-bottom: 1px solid var(--border, #333); vertical-align: top; }
+      th { color: var(--muted-foreground, #999); font-weight: 500; }
+      .err { color: #e07070; }
+      .log { list-style: none; margin: 0; padding: 0; }
+      .log li { padding: 3px 0; color: var(--muted-foreground, #999); border-bottom: 1px solid var(--border, #333); }
     </style>
   </head>
   <body>
-    <h1>Read Aloud</h1>
-    <p>The live list of chats, mute switches, and the on/off control open in a separate window. This sidebar cannot receive those updates.</p>
-    <p>Turn the plugin off and on once so that window opens. It is at <code>http://127.0.0.1:47321</code>.</p>
-    <p>Working means the model is still in the turn, including while it thinks. Speech starts after the turn finishes, unless that chat is muted, Read Aloud is off, or the microphone is on.</p>
+    <header>
+      <h1>Read Aloud</h1>
+      <div>
+        <button id="power" hidden>On</button>
+        <button id="stop" hidden>Stop</button>
+      </div>
+    </header>
+    <div id="waiting">
+      <p>This sidebar fills in when Orca can deliver plugin status here. Until then, the live board is the window at 127.0.0.1:47321.</p>
+      <p>Working means the model is still in the turn, including while it thinks. Speech starts after the turn finishes, unless the chat is muted, Read Aloud is off, or the microphone is on.</p>
+    </div>
+    <div id="live" hidden>
+      <p id="sub"></p>
+      <p id="error" class="err"></p>
+      <p id="spoken"></p>
+      <table>
+        <thead><tr><th>Chat</th><th>Model</th><th>Speech</th><th></th></tr></thead>
+        <tbody id="rows"></tbody>
+      </table>
+      <ul class="log" id="log"></ul>
+    </div>
+    <script>
+      var state = null
+      function escapeHtml(value) {
+        return String(value).replace(/[&<>"']/g, function (ch) {
+          return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch]
+        })
+      }
+      function invoke(commandId, args) {
+        var requestId = String(Date.now()) + Math.random()
+        window.parent.postMessage({
+          type: 'orca-panel-action',
+          requestId: requestId,
+          action: 'plugin.invokeCommand',
+          params: { commandId: commandId, args: args }
+        }, '*')
+      }
+      function draw() {
+        if (!state) return
+        document.getElementById('waiting').hidden = true
+        document.getElementById('live').hidden = false
+        document.getElementById('power').hidden = false
+        document.getElementById('stop').hidden = false
+        document.getElementById('power').textContent = state.enabled ? 'On' : 'Off'
+        var mic = state.mic ? 'Microphone is on, so speech stays quiet. ' : ''
+        document.getElementById('sub').textContent = mic + 'Now: ' + state.phase + '.'
+        document.getElementById('error').textContent = state.lastError || ''
+        document.getElementById('spoken').textContent = state.lastSpoken ? 'Last spoken: ' + state.lastSpoken : ''
+        document.getElementById('rows').innerHTML = (state.sessions || []).map(function (row) {
+          return '<tr><td>' + escapeHtml(row.label) + '</td><td>' + escapeHtml(row.state) +
+            '</td><td>' + escapeHtml(row.phase) + '</td><td><button data-key="' +
+            escapeHtml(row.key) + '">' + (row.muted ? 'Unmute' : 'Mute') + '</button></td></tr>'
+        }).join('') || '<tr><td colspan="4">No chats yet.</td></tr>'
+        document.getElementById('log').innerHTML = (state.activity || []).map(function (line) {
+          return '<li>' + escapeHtml(new Date(line.t).toLocaleTimeString() + ' ' + line.text) + '</li>'
+        }).join('')
+      }
+      window.addEventListener('message', function (event) {
+        var data = event.data
+        if (!data || data.type !== 'orca-panel-push' || !data.body) return
+        state = data.body
+        draw()
+      })
+      document.getElementById('power').onclick = function () {
+        if (!state) return
+        invoke('set-enabled', { on: !state.enabled })
+      }
+      document.getElementById('stop').onclick = function () { invoke('stop', {}) }
+      document.getElementById('rows').onclick = function (event) {
+        var key = event.target && event.target.getAttribute && event.target.getAttribute('data-key')
+        if (key) invoke('mute', { key: key })
+      }
+    </script>
   </body>
 </html>

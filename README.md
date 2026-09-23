@@ -20,7 +20,9 @@ cd orca-read-aloud
 
 In Orca, open Settings, then Plugins. Turn the plugin system on. Under Development, add the folder you just cloned. When Orca asks you to review it, click Enable plugin.
 
-A window opens at http://127.0.0.1:47321. That is the live board. Orca's sidebar cannot receive updates from a plugin while it runs, so on/off, mute, and "this chat is working" live in that window.
+On stock Orca, a window opens at http://127.0.0.1:47321. That is the live board, because the stock sidebar cannot receive plugin updates.
+
+On the `sidebar-channel` fork of Orca, the same board is the Read Aloud sidebar. The fork adds one channel: a plugin can publish status to its own panel, and that panel can run that plugin's own commands. `scripts/rebase-upstream.sh` in that fork rebases those commits onto Orca's main and stops, naming the files, when the rebase conflicts.
 
 ## The board
 
