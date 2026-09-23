@@ -20,15 +20,15 @@ cd orca-read-aloud
 
 In Orca, open Settings, then Plugins. Turn the plugin system on. Under Development, add the folder you just cloned. When Orca asks you to review it, click Enable plugin.
 
-On stock Orca, a window opens at http://127.0.0.1:47321. That is the live board, because the stock sidebar cannot receive plugin updates.
+On stock Orca, the live board is at http://127.0.0.1:47321, because the stock sidebar cannot receive plugin updates.
 
-On the `sidebar-channel` fork of Orca, the same board is the Read Aloud sidebar. The fork adds one channel: a plugin can publish status to its own panel, and that panel can run that plugin's own commands. `scripts/rebase-upstream.sh` in that fork rebases those commits onto Orca's main and stops, naming the files, when the rebase conflicts.
+On the `sidebar-channel` fork of Orca, the same board is the Read Aloud sidebar. The fork adds one channel: a plugin can publish status to its own panel, and that panel can run that plugin's own commands. The fork also tells the plugin each tab's title and the reply that tab just gave, so the sidebar uses your tab names and the voice always reads the tab that finished. `scripts/rebase-upstream.sh` in that fork rebases those commits onto Orca's main and stops, naming the files, when the rebase conflicts.
 
 ## The board
 
-Each chat shows two things. The model column is Orca's status: working, waiting, blocked, or finished. Working covers the whole turn, including while the model is thinking. The speech column says whether Read Aloud will speak when the turn ends, is writing the summary, is speaking, is muted, or stayed quiet because the mic was on.
+The sidebar lists one row per agent tab that was active in the last 45 minutes. Each row shows the agent, how long it has been working, and what Read Aloud last said for it. Working covers the whole turn, including while the model is thinking.
 
-Mute is per chat. Off stops every chat. Stop cuts the current voice immediately.
+Mute is per tab and takes effect on click, including mid-sentence. Off stops everything. Stop cuts the current voice.
 
 Option-Command-X also stops it, including while a terminal has focus. Orca does not deliver plugin shortcuts into a terminal, so `stop-hotkey` registers that chord with macOS.
 

@@ -3,92 +3,197 @@
   <head>
     <meta charset="utf-8" />
     <style>
+      :root {
+        --fg: var(--foreground, #e5e5e5);
+        --dim: var(--muted-foreground, #a1a1a1);
+        --line: var(--border, #2a2a2a);
+        --hover: var(--accent, #1f1f1f);
+        --speak: #3fb97a;
+        --work: #d9a441;
+        --think: #6b9cf0;
+        --off: #6b6b6b;
+      }
+      * { box-sizing: border-box; }
       body {
         margin: 0;
-        padding: 12px;
-        font-family: system-ui, sans-serif;
-        font-size: 12px;
-        line-height: 1.4;
-        color: var(--foreground, #ddd);
+        font: 12px/1.45 -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+        color: var(--fg);
         background: var(--background, transparent);
+        -webkit-font-smoothing: antialiased;
+        user-select: none;
       }
-      h1 { font-size: 14px; margin: 0; }
-      header { display: flex; justify-content: space-between; gap: 8px; align-items: center; }
-      button {
+      header {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 10px 12px;
+        border-bottom: 1px solid var(--line);
+      }
+      header h1 { flex: 1; margin: 0; font-size: 12px; font-weight: 600; letter-spacing: 0.01em; }
+      .icon-btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 5px;
+        height: 24px;
+        min-width: 24px;
+        padding: 0 7px;
         font: inherit;
-        color: inherit;
-        background: var(--card, transparent);
-        border: 1px solid var(--border, #555);
+        color: var(--dim);
+        background: transparent;
+        border: 1px solid transparent;
         border-radius: 6px;
-        padding: 3px 7px;
+        cursor: pointer;
       }
-      p { margin: 8px 0; color: var(--muted-foreground, #999); }
-      table { width: 100%; border-collapse: collapse; }
-      th, td { text-align: left; padding: 5px 4px; border-bottom: 1px solid var(--border, #333); vertical-align: top; }
-      th { color: var(--muted-foreground, #999); font-weight: 500; }
-      .err { color: #e07070; }
-      .log { list-style: none; margin: 0; padding: 0; }
-      .log li { padding: 3px 0; color: var(--muted-foreground, #999); border-bottom: 1px solid var(--border, #333); }
+      .icon-btn:hover { background: var(--hover); color: var(--fg); }
+      .icon-btn svg { width: 14px; height: 14px; flex: none; }
+      .icon-btn[disabled] { opacity: 0.35; cursor: default; background: transparent; }
+      #power.on { color: var(--speak); }
+      .notice {
+        margin: 8px 12px 0;
+        padding: 6px 8px;
+        border-radius: 6px;
+        background: var(--hover);
+        color: var(--dim);
+      }
+      .notice.err { color: var(--destructive, #e5484d); }
+      ul { list-style: none; margin: 4px 0 0; padding: 0; }
+      li {
+        display: grid;
+        grid-template-columns: 10px 1fr auto;
+        column-gap: 8px;
+        align-items: start;
+        padding: 8px 8px 8px 12px;
+        border-radius: 6px;
+        margin: 0 4px;
+      }
+      li:hover { background: var(--hover); }
+      .dot { width: 7px; height: 7px; margin-top: 5px; border-radius: 50%; background: var(--off); }
+      .dot.working { background: var(--work); animation: pulse 1.6s ease-in-out infinite; }
+      .dot.summarizing, .dot.soon { background: var(--think); animation: pulse 1s ease-in-out infinite; }
+      .dot.speaking { background: var(--speak); animation: pulse 0.8s ease-in-out infinite; }
+      @keyframes pulse { 50% { opacity: 0.35; } }
+      .main { min-width: 0; }
+      .title { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-weight: 500; }
+      li.muted .title { color: var(--dim); }
+      .meta { color: var(--dim); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+      .said {
+        margin-top: 3px;
+        color: var(--dim);
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+        font-style: italic;
+      }
+      .said:empty { display: none; }
+      li .icon-btn.mute-on { color: var(--destructive, #e5484d); }
+      .empty { padding: 16px 12px; color: var(--dim); }
     </style>
   </head>
   <body>
     <header>
       <h1>Read Aloud</h1>
-      <div>
-        <button id="power" hidden>On</button>
-        <button id="stop" hidden>Stop</button>
-      </div>
+      <button class="icon-btn" id="stop" title="Stop speaking (⌥⌘X)" disabled>
+        <svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2" /></svg>
+      </button>
+      <button class="icon-btn" id="power" title="Turn Read Aloud on or off"></button>
     </header>
-    <div id="waiting">
-      <p>This sidebar fills in when Orca can deliver plugin status here. Until then, the live board is the window at 127.0.0.1:47321.</p>
-      <p>Working means the model is still in the turn, including while it thinks. Speech starts after the turn finishes, unless the chat is muted, Read Aloud is off, or the microphone is on.</p>
-    </div>
-    <div id="live" hidden>
-      <p id="sub"></p>
-      <p id="error" class="err"></p>
-      <p id="spoken"></p>
-      <table>
-        <thead><tr><th>Chat</th><th>Model</th><th>Speech</th><th></th></tr></thead>
-        <tbody id="rows"></tbody>
-      </table>
-      <ul class="log" id="log"></ul>
-    </div>
+    <div id="notice" class="notice" hidden></div>
+    <ul id="rows"></ul>
+    <div id="empty" class="empty">Waiting for an agent. Each agent tab shows up here while it works, and speaks when it finishes.</div>
     <script>
+      var SPEAKER = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H2v6h4l5 4V5z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M19 5a10 10 0 0 1 0 14"/></svg>'
+      var MUTED = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H2v6h4l5 4V5z"/><path d="m22 9-6 6"/><path d="m16 9 6 6"/></svg>'
       var state = null
-      function escapeHtml(value) {
-        return String(value).replace(/[&<>"']/g, function (ch) {
-          return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch]
-        })
-      }
+      var nodes = {}
+
       function invoke(commandId, args) {
-        var requestId = String(Date.now()) + Math.random()
         window.parent.postMessage({
           type: 'orca-panel-action',
-          requestId: requestId,
+          requestId: String(Date.now()) + Math.random(),
           action: 'plugin.invokeCommand',
           params: { commandId: commandId, args: args }
         }, '*')
       }
+
+      function ago(t) {
+        var s = Math.max(0, Math.round((Date.now() - t) / 1000))
+        if (s < 60) return s + 's'
+        var m = Math.round(s / 60)
+        return m < 60 ? m + 'm' : Math.round(m / 60) + 'h'
+      }
+
+      function status(row) {
+        if (row.muted) return { dot: 'muted', text: 'Muted' }
+        if (row.phase === 'speaking') return { dot: 'speaking', text: 'Speaking' }
+        if (row.phase === 'summarizing') return { dot: 'summarizing', text: 'Writing the summary' }
+        if (row.phase === 'about to speak') return { dot: 'soon', text: 'Up next' }
+        if (row.phase === 'mic') return { dot: 'done', text: 'Quiet, mic is on' }
+        if (row.state === 'working') return { dot: 'working', text: 'Working ' + ago(row.since) }
+        if (row.state === 'blocked' || row.state === 'waiting') return { dot: 'done', text: 'Needs you' }
+        return { dot: 'done', text: 'Finished ' + ago(row.since) + ' ago' }
+      }
+
+      // Rows are kept and patched in place. Rebuilding them each second
+      // swallowed clicks that landed mid-redraw.
+      function makeRow(key) {
+        var li = document.createElement('li')
+        li.innerHTML = '<span class="dot"></span><div class="main"><div class="title"></div>' +
+          '<div class="meta"></div><div class="said"></div></div>' +
+          '<button class="icon-btn mute"></button>'
+        li.querySelector('.mute').addEventListener('click', function () {
+          var row = state && state.sessions.find(function (r) { return r.key === key })
+          if (!row) return
+          row.muted = !row.muted
+          draw()
+          invoke('mute', { key: key })
+        })
+        return li
+      }
+
       function draw() {
         if (!state) return
-        document.getElementById('waiting').hidden = true
-        document.getElementById('live').hidden = false
-        document.getElementById('power').hidden = false
-        document.getElementById('stop').hidden = false
-        document.getElementById('power').textContent = state.enabled ? 'On' : 'Off'
-        var mic = state.mic ? 'Microphone is on, so speech stays quiet. ' : ''
-        document.getElementById('sub').textContent = mic + 'Now: ' + state.phase + '.'
-        document.getElementById('error').textContent = state.lastError || ''
-        document.getElementById('spoken').textContent = state.lastSpoken ? 'Last spoken: ' + state.lastSpoken : ''
-        document.getElementById('rows').innerHTML = (state.sessions || []).map(function (row) {
-          return '<tr><td>' + escapeHtml(row.label) + '</td><td>' + escapeHtml(row.state) +
-            '</td><td>' + escapeHtml(row.phase) + '</td><td><button data-key="' +
-            escapeHtml(row.key) + '">' + (row.muted ? 'Unmute' : 'Mute') + '</button></td></tr>'
-        }).join('') || '<tr><td colspan="4">No chats yet.</td></tr>'
-        document.getElementById('log').innerHTML = (state.activity || []).map(function (line) {
-          return '<li>' + escapeHtml(new Date(line.t).toLocaleTimeString() + ' ' + line.text) + '</li>'
-        }).join('')
+        var power = document.getElementById('power')
+        power.className = 'icon-btn' + (state.enabled ? ' on' : '')
+        power.innerHTML = (state.enabled ? SPEAKER : MUTED) + '<span>' + (state.enabled ? 'On' : 'Off') + '</span>'
+        var talking = state.phase === 'speaking' || state.phase === 'summarizing'
+        document.getElementById('stop').disabled = !talking
+
+        var notice = document.getElementById('notice')
+        var message = state.mic ? 'Microphone is in use, so nothing will be read aloud.' : ''
+        if (!message && state.lastError) message = state.lastError
+        notice.hidden = !message
+        notice.className = 'notice' + (!state.mic && state.lastError ? ' err' : '')
+        notice.textContent = message
+
+        var list = document.getElementById('rows')
+        var seen = {}
+        state.sessions.forEach(function (row, index) {
+          seen[row.key] = true
+          var li = nodes[row.key] || (nodes[row.key] = makeRow(row.key))
+          var st = status(row)
+          li.className = row.muted ? 'muted' : ''
+          li.querySelector('.dot').className = 'dot ' + st.dot
+          li.querySelector('.title').textContent = row.title
+          li.querySelector('.title').title = row.title
+          li.querySelector('.meta').textContent = [row.agent, row.place, st.text].filter(Boolean).join(' · ')
+          li.querySelector('.said').textContent = row.phase === 'speaking' || row.muted ? '' : row.spoken
+          var mute = li.querySelector('.mute')
+          mute.className = 'icon-btn mute' + (row.muted ? ' mute-on' : '')
+          mute.innerHTML = row.muted ? MUTED : SPEAKER
+          mute.title = row.muted ? 'Unmute this tab' : 'Mute this tab'
+          if (list.children[index] !== li) list.insertBefore(li, list.children[index] || null)
+        })
+        Object.keys(nodes).forEach(function (key) {
+          if (!seen[key]) {
+            nodes[key].remove()
+            delete nodes[key]
+          }
+        })
+        document.getElementById('empty').hidden = state.sessions.length > 0
       }
+
       window.addEventListener('message', function (event) {
         var data = event.data
         if (!data || data.type !== 'orca-panel-push' || !data.body) return
@@ -97,13 +202,14 @@
       })
       document.getElementById('power').onclick = function () {
         if (!state) return
-        invoke('set-enabled', { on: !state.enabled })
+        state.enabled = !state.enabled
+        draw()
+        invoke('set-enabled', { on: state.enabled })
       }
       document.getElementById('stop').onclick = function () { invoke('stop', {}) }
-      document.getElementById('rows').onclick = function (event) {
-        var key = event.target && event.target.getAttribute && event.target.getAttribute('data-key')
-        if (key) invoke('mute', { key: key })
-      }
+      invoke('get-state', {})
+      // The worker publishes on change. The clock keeps "Working 12s" fresh.
+      setInterval(draw, 1000)
     </script>
   </body>
 </html>

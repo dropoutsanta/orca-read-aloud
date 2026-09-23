@@ -15,7 +15,8 @@
     "commands": [
       { "id": "stop", "title": "Read Aloud: stop" },
       { "id": "set-enabled", "title": "Read Aloud: set enabled" },
-      { "id": "mute", "title": "Read Aloud: mute chat" }
+      { "id": "mute", "title": "Read Aloud: mute chat" },
+      { "id": "get-state", "title": "Read Aloud: get state" }
     ],
     "events": [{ "on": "agent.status.changed" }],
     "keybindings": [

@@ -45,9 +45,7 @@ const BOARD_PORT = 47321
 let host = null
 let ticket = 0
 let busy = false
-let queued = false
-let queuedWorktree = null
-let queuedKey = null
+const pending = new Map()
 let speech = null
 let claudeChild = null
 let enabled = true
@@ -76,28 +74,30 @@ export default function activate(orca) {
   orca.commands.register('set-enabled', (args) => {
     const on =
       args && typeof args === 'object' && 'on' in args ? Boolean(args.on) : !enabled
-    enabled = on
-    saveState()
-    record(enabled ? 'turned on' : 'turned off')
+    setEnabled(on)
     return { ok: true }
+  })
+  orca.commands.register('get-state', () => {
+    publishBoard(true)
+    return panelState()
   })
   orca.commands.register('mute', (args) => {
     const key = args && typeof args === 'object' && typeof args.key === 'string' ? args.key : ''
     if (!key) return { ok: false }
-    if (muted.has(key)) muted.delete(key)
-    else muted.add(key)
-    saveState()
-    record(muted.has(key) ? `muted ${key}` : `unmuted ${key}`)
+    toggleMute(key)
     return { ok: true }
   })
   orca.events.on('agent.status.changed', (payload) => {
     if (!payload || typeof payload.state !== 'string') return
+    const before = sessions.get(payload.paneKey)
+    const changed = !before || before.state !== payload.state
     const session = noteSession(payload)
-    record(`${session.label} is ${labelState(payload.state)}`)
+    if (changed) record(`${session.label} is ${labelState(payload.state)}`)
     if (payload.state !== 'done') return
-    schedule(orca, worktreePath(payload.worktreeId), session.key)
+    schedule(orca, session.key, payload)
   })
   record('ready')
+  setInterval(() => publishBoard(false), 1000)
   orca.log('read aloud ready')
 }
 
@@ -110,18 +110,60 @@ function halt(orca, why) {
   if (orca) orca.log(why)
 }
 
+function setEnabled(on) {
+  enabled = on
+  saveState()
+  if (!enabled) {
+    pending.clear()
+    if (activeKey) halt(null, 'turned off, speech stopped')
+  }
+  record(enabled ? 'turned on' : 'turned off')
+}
+
+function toggleMute(key) {
+  if (muted.has(key)) muted.delete(key)
+  else muted.add(key)
+  saveState()
+  const session = sessions.get(key)
+  const label = session ? session.label : key.slice(0, 8)
+  if (muted.has(key)) {
+    pending.delete(key)
+    // Muting the chat that is talking cuts it off right away.
+    if (activeKey === key) halt(null, `${label} muted, speech stopped`)
+    else record(`${label} muted`)
+  } else {
+    record(`${label} unmuted`)
+  }
+}
+
 function noteSession(payload) {
   const key = typeof payload.paneKey === 'string' && payload.paneKey ? payload.paneKey : 'unknown'
   const worktree = worktreePath(payload.worktreeId)
   const session = sessions.get(key) || { key, worktree: null, label: key.slice(0, 8) }
   session.worktree = worktree
-  session.label = worktree ? path.basename(worktree) : key.slice(0, 8)
+  session.title = text(payload.title) || session.title || ''
+  session.place = text(payload.worktreeName) || (worktree ? path.basename(worktree) : '') || session.place || ''
+  session.agent = text(payload.agentType) || session.agent || ''
+  session.label = session.title || session.place || agentName(session.agent) || key.slice(0, 8)
+  if (payload.state === 'working' && session.state !== 'working') session.startedAt = Date.now()
   session.state = payload.state
   session.updatedAt = Date.now()
   session.muted = isMuted(session)
   sessions.set(key, session)
   pruneSessions()
   return session
+}
+
+function text(value) {
+  return typeof value === 'string' ? value.trim() : ''
+}
+
+function agentName(agent) {
+  if (!agent) return ''
+  if (agent === 'claude') return 'Claude'
+  if (agent === 'codex') return 'Codex'
+  if (agent === 'grok') return 'Grok'
+  return agent.charAt(0).toUpperCase() + agent.slice(1)
 }
 
 function isMuted(session) {
@@ -141,33 +183,37 @@ function sessionPhase(session) {
   if (session.key === activeKey && phase !== 'quiet') return phase
   if (!enabled) return 'paused'
   if (session.state === 'working') return 'will speak when it finishes'
-  if (session.state === 'done' && queued && queuedKey === session.key) return 'about to speak'
+  if (pending.has(session.key)) return 'about to speak'
   return labelState(session.state || 'quiet')
 }
 
-function schedule(orca, worktree, key) {
-  queuedWorktree = worktree
-  queuedKey = key
-  queued = true
-  if (busy) return
-  kick(orca)
+function schedule(orca, key, payload) {
+  const session = sessions.get(key)
+  if (session && isMuted(session)) {
+    record(`${session.label} finished, muted`)
+    return
+  }
+  pending.delete(key)
+  pending.set(key, payload)
+  if (!busy) kick(orca)
 }
 
 function kick(orca) {
-  const worktree = queuedWorktree
-  const key = queuedKey
-  queued = false
+  const next = pending.entries().next()
+  if (next.done) return
+  const [key, payload] = next.value
+  pending.delete(key)
   busy = true
   const my = ++ticket
   setTimeout(() => {
-    run(orca, my, worktree, key).finally(() => {
+    run(orca, my, key, payload).finally(() => {
       busy = false
-      if (queued && my === ticket) kick(orca)
+      kick(orca)
     })
   }, 900)
 }
 
-async function run(orca, my, worktree, key) {
+async function run(orca, my, key, payload) {
   const session = key ? sessions.get(key) : null
   activeKey = key
   try {
@@ -188,7 +234,7 @@ async function run(orca, my, worktree, key) {
       return
     }
     phase = 'about to speak'
-    const reply = await waitForNewReply(worktree)
+    const reply = await replyFor(payload)
     if (my !== ticket) return
     if (!reply) {
       phase = 'quiet'
@@ -208,6 +254,7 @@ async function run(orca, my, worktree, key) {
       record(`summary failed, speaking a plain extract: ${claudeError}`)
     }
     if (my !== ticket || !summary) return
+    if (session && isMuted(session)) return
     mic = await micOn()
     if (mic) {
       phase = 'mic'
@@ -217,6 +264,10 @@ async function run(orca, my, worktree, key) {
     heard.add(reply.id)
     phase = 'speaking'
     lastSpoken = summary
+    if (session) {
+      session.spoken = summary
+      session.spokenAt = Date.now()
+    }
     record(claudeError ? 'speaking the plain extract' : 'speaking')
     await speak(summary, () => my !== ticket)
     phase = 'quiet'
@@ -237,6 +288,52 @@ function worktreePath(worktreeId) {
   const split = worktreeId.lastIndexOf('::')
   const value = split === -1 ? worktreeId : worktreeId.slice(split + 2)
   return value.startsWith('/') ? value : null
+}
+
+// The fork sends the tab's own transcript path and reply text, so the spoken
+// summary always belongs to the tab that finished. Stock Orca sends neither,
+// and then the newest transcript on disk is the best guess.
+async function replyFor(payload) {
+  const hookText = text(payload.lastAssistantMessage)
+  const file = transcriptFor(payload)
+  if (file) {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const reply = lastReply(file)
+      if (reply && !heard.has(reply.id) && (!hookText || sameReply(reply.text, hookText))) return reply
+      await delay(700)
+    }
+  }
+  if (hookText) {
+    const id = stableId(payload.paneKey + hookText)
+    return heard.has(id) ? null : { id, text: hookText }
+  }
+  if (payload.title || payload.agentType) return null
+  return waitForNewReply(worktreePath(payload.worktreeId))
+}
+
+function sameReply(full, hook) {
+  const probe = (value) => value.replace(/\s+/g, ' ').trim().slice(0, 80)
+  return probe(full).includes(probe(hook).slice(0, 60)) || probe(hook).includes(probe(full).slice(0, 60))
+}
+
+function transcriptFor(payload) {
+  const direct = text(payload.transcriptPath)
+  if (direct && fs.existsSync(direct)) return direct
+  const id = text(payload.providerSessionId)
+  if (payload.agentType === 'grok' && id && !id.includes('/')) {
+    const root = path.join(HOME, '.grok', 'sessions')
+    let dirs = []
+    try {
+      dirs = fs.readdirSync(root)
+    } catch {
+      return null
+    }
+    for (const dir of dirs) {
+      const file = path.join(root, dir, id, 'chat_history.jsonl')
+      if (fs.existsSync(file)) return file
+    }
+  }
+  return null
 }
 
 async function waitForNewReply(worktree) {
@@ -480,9 +577,19 @@ export function micOn() {
 
 function claudeEnv() {
   const env = {}
-  for (const key of ['PATH', 'HOME', 'USER', 'LOGNAME', 'LANG', 'LC_ALL', 'TMPDIR', 'SHELL']) {
+  for (const key of ['PATH', 'HOME', 'USER', 'LOGNAME', 'LANG', 'LC_ALL', 'LC_CTYPE', 'TMPDIR', 'SHELL']) {
     if (process.env[key]) env[key] = process.env[key]
   }
+  // Orca starts plugin workers with a scrubbed environment that omits USER.
+  // Claude treats a missing username as logged out, even when the login is on this Mac.
+  const username = os.userInfo().username
+  if (!env.HOME) env.HOME = HOME
+  if (!env.USER) env.USER = username
+  if (!env.LOGNAME) env.LOGNAME = username
+  if (!env.SHELL) env.SHELL = '/bin/zsh'
+  if (!env.LANG) env.LANG = 'en_US.UTF-8'
+  if (!env.TMPDIR) env.TMPDIR = os.tmpdir()
+  if (!env.PATH) env.PATH = '/usr/bin:/bin'
   return env
 }
 
@@ -611,26 +718,85 @@ function saveState() {
   fs.writeFileSync(STATE_FILE, JSON.stringify({ enabled, muted: [...muted] }))
 }
 
-function publishBoard() {
+let lastPublishError = ''
+let lastPublished = ''
+
+function publishBoard(force) {
   if (!host) return
-  host.call('panel.publish', { body: snapshot() }).catch(() => {})
+  const body = panelState()
+  const encoded = JSON.stringify(body)
+  if (!force && encoded === lastPublished) return
+  lastPublished = encoded
+  host
+    .call('panel.publish', { body })
+    .then((result) => {
+      const delivered = result && typeof result === 'object' ? result.delivered : undefined
+      if (delivered === 0 && lastPublishError !== 'undelivered') {
+        lastPublishError = 'undelivered'
+        appendLog('sidebar publish reached no open panel')
+      } else if (typeof delivered === 'number' && delivered > 0) {
+        lastPublishError = ''
+      }
+    })
+    .catch((err) => {
+      const message = err instanceof Error ? err.message : String(err)
+      if (message !== lastPublishError) {
+        lastPublishError = message
+        appendLog('sidebar publish failed: ' + message)
+      }
+    })
+}
+
+function appendLog(text) {
+  try {
+    fs.mkdirSync(path.dirname(LOG_FILE), { recursive: true })
+    fs.appendFileSync(LOG_FILE, `${new Date().toISOString()} ${text}\n`)
+  } catch {
+    // The in-memory board still has the line.
+  }
 }
 
 function record(text) {
   activity.unshift({ t: Date.now(), text })
   if (activity.length > 40) activity.pop()
-  publishBoard()
-  try {
-    fs.mkdirSync(path.dirname(LOG_FILE), { recursive: true })
-    fs.appendFileSync(LOG_FILE, `${new Date().toISOString()} ${text}\n`)
-  } catch {
-    // The board still has the line if the log file cannot be written.
-  }
+  publishBoard(false)
+  appendLog(text)
 }
 
 function pruneSessions() {
   const ranked = [...sessions.values()].sort((a, b) => b.updatedAt - a.updatedAt)
   for (const session of ranked.slice(20)) sessions.delete(session.key)
+}
+
+const RECENT_MS = 45 * 60 * 1000
+
+// The sidebar shows one row per agent tab that did something recently.
+function panelState() {
+  const now = Date.now()
+  const rows = [...sessions.values()]
+    .filter((session) => session.key === activeKey || pending.has(session.key) ||
+      session.state === 'working' || now - session.updatedAt < RECENT_MS)
+    .sort((a, b) => rank(b) - rank(a) || b.updatedAt - a.updatedAt)
+    .slice(0, 8)
+    .map((session) => ({
+      key: session.key,
+      title: session.label,
+      place: session.title && session.place !== session.title ? session.place : '',
+      agent: agentName(session.agent),
+      state: session.state || 'quiet',
+      phase: sessionPhase(session),
+      muted: isMuted(session),
+      since: session.state === 'working' ? session.startedAt || session.updatedAt : session.updatedAt,
+      spoken: session.spoken || ''
+    }))
+  return { enabled, mic, phase, lastError, sessions: rows }
+}
+
+function rank(session) {
+  if (session.key === activeKey) return 3
+  if (pending.has(session.key)) return 2
+  if (session.state === 'working') return 1
+  return 0
 }
 
 function snapshot() {
@@ -692,17 +858,10 @@ function startBoard() {
         payload = {}
       }
       if (url.pathname === '/api/enabled') {
-        enabled = payload.on !== false
-        saveState()
-        record(enabled ? 'turned on' : 'turned off')
+        setEnabled(payload.on !== false)
       } else if (url.pathname === '/api/mute') {
         const key = typeof payload.key === 'string' ? payload.key : ''
-        if (key) {
-          if (muted.has(key)) muted.delete(key)
-          else muted.add(key)
-          saveState()
-          record(muted.has(key) ? `muted ${key}` : `unmuted ${key}`)
-        }
+        if (key) toggleMute(key)
       } else if (url.pathname === '/api/stop') {
         halt(null, 'stopped from the board')
       }
@@ -710,9 +869,7 @@ function startBoard() {
       res.end(JSON.stringify(snapshot()))
     })
   })
-  server.listen(BOARD_PORT, '127.0.0.1', () => {
-    spawn('/usr/bin/open', [`http://127.0.0.1:${BOARD_PORT}`], { stdio: 'ignore' })
-  })
+  server.listen(BOARD_PORT, '127.0.0.1')
   server.on('error', (err) => {
     record(`board did not start: ${err.message}`)
   })
